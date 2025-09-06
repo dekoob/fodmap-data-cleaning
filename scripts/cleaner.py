@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Thai Ingredient Data Cleaning Framework
-=====================================
+Thai Ingredient Data Cleaning Framework - REFINED VERSION
+=========================================================
 
-This script provides a complete pipeline for cleaning Thai food ingredient data.
-It combines rule-based preprocessing with LLM-powered standardization.
+This script provides a complete pipeline for cleaning Thai food ingredient data
+with enhanced rules based on real-world data analysis.
 """
 
 import re
@@ -14,65 +14,182 @@ import json
 
 class ThaiIngredientCleaner:
     def __init__(self):
-        # Common Thai measurement units to remove
+        # Enhanced measurement patterns - more comprehensive
         self.measurement_patterns = [
-            r'\d+\s*(ถ้วย|แก้ว|ชิ้น|ลูก|ห่อ|จาน|กิโล|กรัม|oz|ml)',
-            r'\d+\s*(ครึ่ง|หนึ่ง|สอง|สาม|สี่|ห้า)',
-            r'(ครึ่ง|หนึ่ง)\s*(ถ้วย|แก้ว|ชิ้น|ลูก|จาน)',
-            r'\d+\.*\d*\s*(แก้ว|ถ้วย|ชิ้น|ลูก|ห่อ)'
+            r'\d+\s*(ถ้วย|แก้ว|ชิ้น|ลูก|ห่อ|จาน|กิโล|กรัม|oz|ml|ตัว|ผล|เม็ด|สกูป|แผ่น)',
+            r'\d+\s*(ครึ่ง|หนึ่ง|สอง|สาม|สี่|ห้า|หก|เจ็ด|แปด|เก้า|สิบ)',
+            r'(ครึ่ง|หนึ่ง|หน่อย|นิด|เล็กน้อย)\s*(ถ้วย|แก้ว|ชิ้น|ลูก|จาน|ตัว|ผล)',
+            r'\d+/\d+\s*(ถ้วย|แก้ว|ชิ้น|ลูก|สกูป)',  # Fractions like 1/4
+            r'\d+\.*\d*\s*(แก้ว|ถ้วย|ชิ้น|ลูก|ห่อ|ตัว|ผล|ml|เม็ด)',
+            r'\b\d+\s*(?=\w)',  # Numbers before words
         ]
         
-        # Cooking methods to remove
+        # Expanded cooking methods - more comprehensive
         self.cooking_methods = [
-            'ทอด', 'ย่าง', 'ต้ม', 'ผัด', 'นึ่ง', 'ปิ้ง', 'เผา', 'ต้ม', 
-            'กรอบ', 'เปื่อย', 'หวาน', 'เปรี้ยว', 'เผ็ด', 'เย็น', 'ร้อน'
+            'ทอด', 'ย่าง', 'ต้ม', 'ผัด', 'นึ่ง', 'ปิ้ง', 'เผา', 'อบ', 'ลวก',
+            'กรอบ', 'เปื่อย', 'หวาน', 'เปรี้ยว', 'เผ็ด', 'เย็น', 'ร้อน', 'แห้ง',
+            'สด', 'เก่า', 'ใหม่', 'ดิบ', 'สุก', 'เด้ง', 'แดง', 'ขาว', 'เขียว',
+            'คั่ว', 'ชุบ', 'ราด', 'จิ้ม', 'คลุก', 'ผสม', 'เกรียบ', 'กวน'
         ]
         
-        # Brand names and commercial terms
+        # Enhanced brand patterns and commercial terms
         self.brand_patterns = [
-            r'(KFC|7-11|โอวัลติน|นูเทลล่า|B-ready)',
-            r'(แบบ|รส|ใส่|ผสม|จาก)',
+            r'(KFC|7-11|โอวัลติน|นูเทลล่า|B-ready|Ensure|nutella|บอดีคีย์)',
+            r'(แบบ|รส|ใส่|ผสม|จาก|ยี่ห้อ|แบรนด์)',
+            r'(ครึ่งจาน|ตัวเล็ก|ค้างคืน|จากเมื่อวาน|อุ่นร้อน)',
+            r'(โฮมสวิท|ไลเบอรี่|แลคโตสฟรี)',
         ]
         
-        # Ingredient standardization dictionary
+        # Dish description patterns to remove
+        self.dish_descriptions = [
+            r'"[^"]*"',  # Text in quotes
+            r'มี[^"]*?(?=\s|$)',  # "มี" descriptions
+            r'ประกอบด้วย[^"]*?(?=\s|$)',  # "ประกอบด้วย" descriptions
+            r'ส่วนประกอบ[^"]*?(?=\s|$)',  # Component descriptions
+            r'ใส่[^"]*?(?=\s|$)',  # "ใส่" descriptions
+            r'ทำจาก[^"]*?(?=\s|$)',  # "ทำจาก" descriptions
+        ]
+        
+        # Non-food items to remove
+        self.non_food_items = [
+            'มื้อเช้า', 'มื้อกลางวัน', 'มื้อเย็น', 'เช้า', 'กลางวัน', 'เย็น',
+            'ก่อนอาหาร', 'หลังอาหาร', 'ไม่ได้ทาน', 'ไม่ได้ทานอะไร',
+            'ครึ่งจาน', 'ใส่', 'แต่ง', 'กลิ่น', 'นำมา', 'แล้ว', 'เมื่อ',
+            'เครื่องเคียง:'
+        ]
+        
+        # Enhanced ingredient mapping with more variants observed
         self.ingredient_mapping = {
-            # Noodles
+            # Noodles - more variants
             'ก้วยเตี๋ยว': 'ก๋วยเตี๋ยว',
+            'ก๊วยเตี๋ยว': 'ก๋วยเตี๋ยว',
             'เส้นเล็ก': 'ก๋วยเตี๋ยวเส้นเล็ก',
             'เส้นใหญ่': 'ก๋วยเตี๋ยวเส้นใหญ่',
             'เส้นหมี่': 'หมี่',
             'รามยอนแห้ง': 'รามยอน',
+            'รามยอน': 'รามยอน',
+            'บะหมี่': 'บะหมี่',
             
-            # Rice
+            # Rice varieties
             'ข้าวสวย': 'ข้าว',
+            'ข้าวเปล่า': 'ข้าว',
+            'ข้าวกล้อง': 'ข้าวกล้อง',
             'ข้าวต้ม': 'โจ๊ก',
+            'ข้าวโจ๊ก': 'โจ๊ก',
             'ข้าวโอ๊ต': 'โอ๊ต',
+            'ข้าวไรเบอรี่': 'ข้าวไรเบอรี่',
+            'ข้าวหมาก': 'ข้าวหมาก',
+            
+            # Meat standardization - remove cooking methods
+            'หมูทอด': 'หมู',
+            'หมูย่าง': 'หมู',
+            'หมูปิ้ง': 'หมู',
+            'หมูหวาน': 'หมู',
+            'หมูกรอบ': 'หมู',
+            'หมูเด้ง': 'หมู',
+            'หมูสับ': 'หมู',
+            'หมูฝอย': 'หมู',
+            'หมูหยอง': 'หมู',
+            'คอหมู': 'หมู',
+            'ขาหมู': 'หมู',
+            'ซี่โครงหมู': 'หมู',
+            'กระดูกหมู': 'กระดูกหมู',  # Keep as specific item
+            
+            # Chicken variations
+            'ไก่ทอด': 'ไก่',
+            'ไก่ย่าง': 'ไก่',
+            'ไก่นึ่ง': 'ไก่',
+            'เนื้อไก่': 'ไก่',
+            'น่องไก่': 'ไก่',
+            'ตีนไก่': 'ไก่',
+            
+            # Fish varieties - keep specific types but remove cooking methods
+            'ปลาทอด': 'ปลา',
+            'ปลากรอบ': 'ปลา',
+            'ปลาทู': 'ปลาทู',
+            'ปลากะพง': 'ปลากะพง',
+            'ปลาดุก': 'ปลาดุก',
+            'ปลาหมึก': 'ปลาหมึก',
+            'ปลากราย': 'ปลากราย',
+            'ปลานิล': 'ปลานิล',
+            'ปลากะเบน': 'ปลากะเบน',
+            'ปลาจาระเม็ด': 'ปลาจาระเม็ด',
+            'เนื้อปลา': 'ปลา',
             
             # Beverages
             'น้ำเปล่า': 'น้ำ',
+            'นม': 'นม',
             'นมวัว': 'นม',
+            'นมข้น': 'นมข้น',
+            'นมข้าวโอ๊ต': 'นมข้าวโอ๊ต',
+            'กาแฟดำ': 'กาแฟ',
+            'ชาไทย': 'ชา',
+            'ชาเขียว': 'ชาเขียว',
+            'โกโก้': 'โกโก้',
             
-            # Fruits
+            # Fruits - remove ripeness indicators
             'มะม่วงสุก': 'มะม่วง',
+            'มะม่วงดิบ': 'มะม่วง',
+            'มะม่วงเปรี้ยว': 'มะม่วง',
+            'กล้วยหอม': 'กล้วย',
+            'กล้วยน้ำว้า': 'กล้วย',
             'ส้มโอ': 'ส้ม',
+            
+            # Vegetables - standardize names
+            'ผักกาดขาว': 'ผักกาดขาว',
+            'ผักกวางตุ้ง': 'ผักกวางตุ้ง',
+            'ผักบุ้ง': 'ผักบุ้ง',
+            'ผักโขม': 'ผักโขม',
+            'คะน้า': 'คะน้า',
+            'กะหล่ำปลี': 'กะหล่ำปลี',
+            'บร็อกโคลี่': 'บร็อกโคลี่',
+            'บอคโคลี่': 'บร็อกโคลี่',
+            'แครอท': 'แครอท',
+            'แครรอท': 'แครอท',
+            'มะเขือเทศ': 'มะเขือเทศ',
+            'แตงกวา': 'แตงกวา',
+            'แตงกว่า': 'แตงกวา',
+            
+            # Eggs - standardize all preparations
+            'ไข่ไก่': 'ไข่',
+            'ไข่ดาว': 'ไข่',
+            'ไข่เจียว': 'ไข่',
+            'ไข่ต้ม': 'ไข่',
+            'ไข่ตุ๋น': 'ไข่',
+            'ไข่ลวก': 'ไข่',
+            'ไข่พะโล้': 'ไข่',
+            'ไข่คน': 'ไข่',
         }
     
     def step1_basic_cleaning(self, text: str) -> str:
-        """Step 1: Basic text cleaning"""
+        """Step 1: Enhanced basic text cleaning"""
         if pd.isna(text) or text.strip() == '-':
             return ""
         
-        # Remove quotes and special characters
+        # Remove quotes and content within quotes
+        text = re.sub(r'"[^"]*"', ' ', text)
         text = re.sub(r'["\'""]', '', text)
-        text = re.sub(r'[-–—]', ' ', text)
         
-        # Remove measurements
+        # Remove dish descriptions
+        for pattern in self.dish_descriptions:
+            text = re.sub(pattern, ' ', text, flags=re.IGNORECASE)
+        
+        # Remove newlines and special characters
+        text = re.sub(r'[\n\r\u200b]+', ' ', text)  # Include zero-width space
+        text = re.sub(r'[-–—()[\]{}]', ' ', text)
+        text = re.sub(r'[+=#%]', ' ', text)
+        
+        # Remove measurements (enhanced)
         for pattern in self.measurement_patterns:
-            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+            text = re.sub(pattern, ' ', text, flags=re.IGNORECASE)
         
-        # Remove brand names
+        # Remove brand names and commercial terms
         for pattern in self.brand_patterns:
-            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+            text = re.sub(pattern, ' ', text, flags=re.IGNORECASE)
+        
+        # Remove non-food items
+        for item in self.non_food_items:
+            text = re.sub(rf'\b{item}\b', ' ', text, flags=re.IGNORECASE)
         
         # Clean up whitespace
         text = re.sub(r'\s+', ' ', text)
@@ -81,14 +198,27 @@ class ThaiIngredientCleaner:
         return text
     
     def step2_remove_cooking_descriptions(self, text: str) -> str:
-        """Step 2: Remove cooking methods and descriptions"""
-        # Remove long cooking descriptions (sentences with cooking verbs)
-        cooking_sentence_pattern = r'[^.]*?(สับ|ย่าง|ทอด|ต้ม|นำไป|แล้ว)[^.]*?[.]?'
-        text = re.sub(cooking_sentence_pattern, '', text)
+        """Step 2: Enhanced removal of cooking methods and descriptions"""
+        # Remove complex cooking descriptions and instructions
+        cooking_instruction_patterns = [
+            r'[^.]*?(สับ|ย่าง|ทอด|ต้ม|นำไป|แล้ว|เผา|อบ|ลวก)[^.]*?[.]?',
+            r'[^.]*?(ให้ละเอียด|นำมา|แต่งกลิ่น|ประกอบด้วย)[^.]*?[.]?',
+            r'มี[^"]*?(?=\s)',  # Remove "มี..." descriptions
+            r'ใส่[^"]*?(?=\s)',  # Remove "ใส่..." descriptions
+        ]
         
-        # Remove cooking methods attached to ingredients
+        for pattern in cooking_instruction_patterns:
+            text = re.sub(pattern, ' ', text, flags=re.IGNORECASE)
+        
+        # Remove cooking methods attached to ingredients more aggressively
         for method in self.cooking_methods:
-            text = re.sub(rf'\b\w+{method}\b', lambda m: m.group().replace(method, ''), text)
+            # Remove method as suffix
+            text = re.sub(rf'\b(\w+){method}\b', r'\1', text)
+            # Remove method as standalone word
+            text = re.sub(rf'\b{method}\b', ' ', text)
+        
+        # Clean up parenthetical content that's usually descriptions
+        text = re.sub(r'\([^)]*\)', ' ', text)
         
         # Clean up
         text = re.sub(r'\s+', ' ', text)
@@ -130,7 +260,7 @@ class ThaiIngredientCleaner:
                     ingredient = ingredient[:-len(method)]
             
             ingredient = ingredient.strip()
-            if ingredient:
+            if ingredient and len(ingredient) > 1:  # Filter very short items
                 standardized.append(ingredient)
         
         return standardized
@@ -153,7 +283,8 @@ class ThaiIngredientCleaner:
         
         return {
             'original': original,
-            'cleaned_text': no_cooking,
+            'step1_cleaned': cleaned,
+            'step2_no_cooking': no_cooking,
             'ingredients_raw': ingredients_raw,
             'ingredients_final': ingredients_final,
             'ingredient_count': len(ingredients_final)
@@ -170,8 +301,6 @@ class ThaiIngredientCleaner:
         
         results_df = pd.DataFrame(results)
         return results_df
-
-
 
 # =============================================================================
 # LLM PROMPT TEMPLATES FOR FURTHER CLEANING
@@ -255,9 +384,8 @@ REVIEW:"""
         
         return prompt
 
-
 # =============================================================================
-# PROCESSING PIPELINE CONFIGURATION
+# PROCESSING PIPELINE
 # =============================================================================
 
 class ProcessingPipeline:
@@ -304,24 +432,25 @@ class ProcessingPipeline:
         valid_entries = df['is_valid'].sum()
         avg_ingredients = df['ingredient_count'].mean()
         
+        # Get ingredient frequency
+        all_ingredients = []
+        for ingredients_list in df['ingredients_final']:
+            if ingredients_list:  # Check if list is not empty
+                all_ingredients.extend(ingredients_list)
+        
+        from collections import Counter
+        most_common = dict(Counter(all_ingredients).most_common(20))
+        
         report = {
             'total_entries': total_entries,
             'valid_entries': valid_entries,
-            'success_rate': valid_entries / total_entries * 100,
+            'success_rate': valid_entries / total_entries * 100 if total_entries > 0 else 0,
             'avg_ingredients_per_entry': avg_ingredients,
-            'most_common_ingredients': self.get_ingredient_frequency(df)
+            'most_common_ingredients': most_common,
+            'total_unique_ingredients': len(set(all_ingredients))
         }
         
         return report
-    
-    def get_ingredient_frequency(self, df: pd.DataFrame) -> Dict:
-        """Get frequency of ingredients across all entries"""
-        all_ingredients = []
-        for ingredients_list in df['ingredients_final']:
-            all_ingredients.extend(ingredients_list)
-        
-        from collections import Counter
-        return dict(Counter(all_ingredients).most_common(20))
 
 
 # Export functions for easy use
