@@ -30,18 +30,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 @dataclass
 class ProcessingConfig:
     """Configuration for processing parameters"""
     api_key: str
-    batch_size: int = 10  # Process 10 entries per batch
+    batch_size: int = 20  # Process 20 entries per batch (increased)
     max_retries: int = 3
     retry_delay: float = 2.0  # seconds
-    rate_limit_delay: float = 1.0  # seconds between API calls
-    max_tokens: int = 1000
+    rate_limit_delay: float = 1.5  # Increased delay for larger batches
+    max_tokens: int = 2000  # Increased for larger batches
     temperature: float = 0.1  # Low temperature for consistent results
-    model_name: str = "gemini-2.0-flash-exp"
+    model_name: str = "gemini-2.0-flash-lite"
 
 class GeminiIngredientCleaner:
     """Thai ingredient cleaner using Gemini 2.0 API"""
@@ -50,6 +49,55 @@ class GeminiIngredientCleaner:
         self.config = config
         self.api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{config.model_name}:generateContent"
         self.session = None
+        
+        # Define system instruction once - will be reused for all API calls
+        self.system_instruction = """You are a Thai cuisine expert. Clean these ingredient lists using this 4-stage process:
+
+STAGE 1: PRE-PROCESSING & NORMALIZATION
+- Remove quantities/measurements (1ถ้วย, 5ชิ้น, ครึ่งจาน, etc.)
+- Remove brands (KFC, 7-11, Ensure, นูเทลล่า, etc.)
+- Remove punctuation and special characters
+- Standardize spacing (multiple spaces → single space)
+- Remove cooking modifiers: ทอด, ย่าง, ต้ม, นึ่ง, กรอบ, เปื่อย, หวาน, เปรี้ยว, เผ็ด, สด, แห้ง, ตุ๋น
+- Remove non-food related items
+
+STAGE 2: STANDARDIZING INGREDIENTS
+- Apply synonym mapping, for example:
+  * ข้าวสวย → ข้าว
+  * หมูทอด/หมูย่าง/หมูปิ้ง → หมู
+  * ปลาทอด/ปลากรอบ → ปลา
+  * น้ำเปล่า → น้ำ
+  * มะม่วงสุก → มะม่วง
+- Fix common misspellings:
+  * ก้วยเตี๋ยว → ก๋วยเตี๋ยว
+  * แครรอท → แครอท
+  * บอคโคลี่ → บร็อกโคลี่
+
+STAGE 3: DECONSTRUCTING DISHES
+Break down complex dishes or complex ingredients into core ingredients, for example:
+- แกงเขียวหวาน → กะทิ, เครื่องแกงเขียวหวาน, เนื้อ/ไก่
+- เครื่องแกงเขียวหวาน → ตะไคร้, ข่า, พริก, มะกรูด, ผักชี, กะปิ, ยี่หร่า, หอมแดง, กระเทียม
+- ส้มตำ → มะละกอ, มะเขือเทศ, ถั่วฝักยาว, กุ้งแห้ง
+- ลาบ → เนื้อ/หมู, สะระแหน่, หอมแดง, น้ำมะนาว
+- น้ำพริกกะปิ → กะปิ, พริก, กระเทียม, น้ำมะนาว
+
+STAGE 4: ADD FODMAP DOMAIN KNOWLEDGE (IF APPLICABLE)
+When certain ingredients are present, ADD their FODMAP category, for example:
+- หอมแดง, กระเทียม, หอมใหญ่, กุยช่าย → Fructan_Rich_Alliums
+- มะม่วง, แอปเปิ้ล, น้ำผึ้ง, ลิ้นจี่ → Excess_Fructose_Rich_Foods  
+- นม, นมข้น, โยเกิร์ต, ชีส → Lactose_Rich_Foods
+- ถั่ว, ถั่วเขียว, ถั่วแดง, ถั่วลันเตา → GOS_Rich_Foods
+- เห็ด, กะหล่ำดอก, พลัม, ท้อ → Polyol_Rich_Foods
+
+Keep other ingredients as individual items. Mix both ingredient names and FODMAP categories in the same output.
+
+OUTPUT FORMAT - Return each entry on a new line with the number:
+1. ingredient1, Fructan_Rich_Alliums, ingredient3
+2. ingredient1, Lactose_Rich_Foods
+etc.
+
+
+Apply ALL 4 stages. Extract ONLY actual food ingredients + FODMAP categories, comma-separated."""
         
         # Stats tracking
         self.stats = {
@@ -70,43 +118,28 @@ class GeminiIngredientCleaner:
             await self.session.close()
     
     def create_cleaning_prompt(self, ingredients_batch: List[str]) -> str:
-        """Create optimized prompt for Gemini 2.0"""
+        """Create minimal prompt - just pass ingredient text, system instruction does the work"""
         
         # Format ingredients with numbers for easy parsing
         ingredients_text = ""
         for i, ing in enumerate(ingredients_batch, 1):
             ingredients_text += f"{i}. {ing}\n"
         
-        prompt = f"""You are an expert Thai cuisine specialist. Clean and standardize these Thai ingredient lists.
-
-RULES:
-1. Remove quantities, measurements, brands (KFC, 7-11, Ensure, etc.)
-2. Remove cooking methods (ทอด, ย่าง, ต้ม, นึ่ง, etc.) 
-3. Standardize ingredient names (ข้าวสวย→ข้าว, หมูทอด→หมู)
-4. Extract ingredients from quoted descriptions
-5. Remove non-food items (meal times, cooking instructions)
-6. Output ONLY the clean ingredients, comma-separated
-
-INPUT:
-{ingredients_text}
-
-OUTPUT FORMAT - Return each entry on a new line starting with the number:
-1. ingredient1, ingredient2, ingredient3
-2. ingredient1, ingredient2
-etc.
-
-CLEANED INGREDIENTS:"""
-        
-        return prompt
+        # Just the ingredient data - system instruction handles all the rules
+        return ingredients_text.strip()
     
     async def call_gemini_api(self, prompt: str) -> Optional[str]:
-        """Make API call to Gemini 2.0 with error handling"""
+        """Make API call to Gemini 2.0 with system instructions"""
         
         headers = {
             'Content-Type': 'application/json',
         }
         
+        # Use system instruction + shorter user prompt for efficiency
         payload = {
+            'system_instruction': {
+                'parts': [{'text': self.system_instruction}]
+            },
             'contents': [{
                 'parts': [{'text': prompt}]
             }],
@@ -181,7 +214,7 @@ CLEANED INGREDIENTS:"""
         """Process a batch of ingredient entries"""
         
         try:
-            prompt = self.create_cleaning_prompt(batch)
+            prompt = self.create_cleaning_prompt(batch)  # Updated function name
             response = await self.call_gemini_api(prompt)
             
             if response:
@@ -218,8 +251,11 @@ CLEANED INGREDIENTS:"""
             end_idx = min(start_idx + self.config.batch_size, total_entries)
             batch_indices = list(range(start_idx, end_idx))
             
-            # Get batch data
-            batch_data = [df.iloc[i][column_name] for i in batch_indices]
+            # Get batch data - handle both DataFrame and Series
+            if isinstance(df, pd.Series):
+                batch_data = [df.iloc[i] for i in batch_indices]
+            else:
+                batch_data = [df.iloc[i][column_name] for i in batch_indices]
             
             logger.info(f"Processing batch {start_idx//self.config.batch_size + 1}/{(total_entries-1)//self.config.batch_size + 1} (entries {start_idx}-{end_idx-1})")
             
@@ -284,6 +320,3 @@ def load_checkpoint(checkpoint_path: str) -> Optional[pd.DataFrame]:
         logger.info(f"Checkpoint loaded from {checkpoint_path}")
         return df
     return None
-
-
-

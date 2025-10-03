@@ -35,10 +35,11 @@ async def main():
     # Configuration
     config = ProcessingConfig(
         api_key=os.getenv('GEMINI_API_KEY', 'your-api-key-here'),
-        batch_size=25,  # Smaller batches for better success rate
+        batch_size=30,  # Smaller batches for better success rate
         max_retries=3,
-        rate_limit_delay=1.5,  # Conservative rate limiting
-        temperature=0.1
+        rate_limit_delay=2.0,  # Conservative rate limiting
+        temperature=0.1,
+        max_tokens=3000
     )
     
     if config.api_key == 'your-api-key-here':
@@ -46,8 +47,8 @@ async def main():
         return
     
     # Load your data
-    # df = pd.read_csv('your_ingredient_data.csv')
-    # For demo, create sample data
+
+    # # # For demo, create sample data
     # sample_data = [
     #     'ปลานิลนึง กะหล่ำปลีลวก น้ำปั่นผลไม้ 1แก้ว',
     #     '"ผัดเผ็ดปลากะเบน"มีเนื้อปลากะเบน"พริกแกง"',
@@ -55,6 +56,9 @@ async def main():
     #     'ข้าวสวย1จาน น้ำพริกปลาทู บะหมี่ ลูกชิ้นปลา',
     #     'วัฟเฟิล ทำจากแป้งสาลี และน้ำตาลเป็นหลัก'
     # ] * 5  # Duplicate for demo
+
+    # # Create test dataframe
+    # df = pd.DataFrame({'ingredients': sample_data})
     
     df = pd.read_excel('data/raw/chatbot_phase2.xlsx', sheet_name='Total')
     df = df.rename(columns={'List menu': 'ingredients'})
@@ -76,7 +80,7 @@ async def main():
             results_df = await cleaner.process_dataframe(df, 'ingredients')
             
             # Save final results
-            output_path = 'data/processed/version1/cleaned_ingredients_gemini.csv'
+            output_path = 'data/processed/version2/cleaned_ingredients.csv'
             results_df.to_csv(output_path, encoding="utf-8-sig", index=False)
             logger.info(f"Results saved to {output_path}")
             
